@@ -1,0 +1,253 @@
+name: Validate PR — Studio runtime check (Phase 2, testing)
+
+# Phase 2 — Studio API runtime validation.
+#
+# Currently configured to POST to webhook.site for testing purposes.
+# This lets you inspect the exact payload before handing the spec to engineering.
+#
+# Once the real Lamatic Studio validation endpoint is live:
+#   1. Replace LAMATIC_VALIDATION_ENDPOINT with the real URL
+#   2. Update LAMATIC_VALIDATION_API_KEY secret with the real key
+#   3. Update the response parsing logic to handle real errors
+#
+# Current test setup:
+#   Endpoint : https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb
+#   API Key  : test-key-123 (stored as LAMATIC_VALIDATION_API_KEY secret)
+
+on:
+  workflow_run:
+    workflows: ['Validate PR Contribution']
+    types: [completed]
+
+jobs:
+  studio-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run after Phase 1 passed
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Detect changed kits
+        id: detect
+        env:
+          BASE_REF: ${{ github.event.workflow_run.pull_requests[0].base.ref || 'main' }}
+        run: |
+          git fetch origin "$BASE_REF"
+          MERGE_BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMRD "$MERGE_BASE"...HEAD || true)
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Extract unique kit/bundle/template paths from changed files
+          KITS=()
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if [[ "$file" == kits/* ]]; then
+              path=$(echo "$file" | cut -d/ -f1-3)
+            elif [[ "$file" == bundles/* ]]; then
+              path=$(echo "$file" | cut -d/ -f1-2)
+            elif [[ "$file" == templates/* ]]; then
+              path=$(echo "$file" | cut -d/ -f1-2)
+            else
+              continue
+            fi
+            KITS+=("$path")
+          done <<< "$CHANGED_FILES"
+
+          # Deduplicate
+          UNIQUE_KITS=($(printf '%s\n' "${KITS[@]}" | sort -u))
+
+          if [ ${#UNIQUE_KITS[@]} -eq 0 ]; then
+            echo "No kit/bundle/template changes detected."
+            echo "kits=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Detected kits: ${UNIQUE_KITS[*]}"
+            echo "kits=${UNIQUE_KITS[*]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build payload and POST to endpoint
+        id: studio
+        env:
+          LAMATIC_VALIDATION_API_KEY: ${{ secrets.LAMATIC_VALIDATION_API_KEY }}
+          LAMATIC_VALIDATION_ENDPOINT: 'https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb'
+        run: |
+          if [ -z "$LAMATIC_VALIDATION_API_KEY" ]; then
+            echo "::warning::LAMATIC_VALIDATION_API_KEY not set — skipping Studio check."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          KITS="${{ steps.detect.outputs.kits }}"
+          if [ -z "$KITS" ]; then
+            echo "No kits detected — skipping Studio check."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          for KIT_PATH in $KITS; do
+            echo "--- Processing $KIT_PATH ---"
+
+            # Determine type
+            if [[ "$KIT_PATH" == kits/* ]]; then
+              TYPE="kit"
+            elif [[ "$KIT_PATH" == bundles/* ]]; then
+              TYPE="bundle"
+            elif [[ "$KIT_PATH" == templates/* ]]; then
+              TYPE="template"
+            else
+              TYPE="unknown"
+            fi
+
+            SLUG=$(basename "$KIT_PATH")
+
+            # Read config.json if present
+            CONFIG_CONTENT="null"
+            if [ -f "$KIT_PATH/config.json" ]; then
+              CONFIG_CONTENT=$(cat "$KIT_PATH/config.json")
+            fi
+
+            # Read README.md if present
+            README_CONTENT=""
+            if [ -f "$KIT_PATH/README.md" ]; then
+              README_CONTENT=$(cat "$KIT_PATH/README.md" | node -e "
+                let d=''; process.stdin.on('data',c=>d+=c);
+                process.stdin.on('end',()=>process.stdout.write(JSON.stringify(d)));
+              ")
+            else
+              README_CONTENT='""'
+            fi
+
+            # Bundle all flows into a JSON array
+            node -e "
+              const fs = require('fs');
+              const path = require('path');
+
+              const kitPath = '$KIT_PATH';
+              const flowsDir = path.join(kitPath, 'flows');
+              const flows = [];
+
+              if (fs.existsSync(flowsDir)) {
+                const flowDirs = fs.readdirSync(flowsDir).filter(f =>
+                  fs.statSync(path.join(flowsDir, f)).isDirectory()
+                );
+
+                for (const flowName of flowDirs) {
+                  const flowPath = path.join(flowsDir, flowName);
+                  const flow = { name: flowName };
+
+                  for (const file of ['config.json', 'inputs.json', 'meta.json', 'README.md']) {
+                    const filePath = path.join(flowPath, file);
+                    if (fs.existsSync(filePath)) {
+                      const content = fs.readFileSync(filePath, 'utf8');
+                      const key = file.replace('.', '_').replace('/', '_').toLowerCase();
+                      try {
+                        flow[key] = JSON.parse(content);
+                      } catch {
+                        flow[key] = content;
+                      }
+                    }
+                  }
+                  flows.push(flow);
+                }
+              }
+
+              // Build full payload
+              const payload = {
+                slug: '$SLUG',
+                type: '$TYPE',
+                kitPath: '$KIT_PATH',
+                config: (() => {
+                  try { return JSON.parse(fs.readFileSync('$KIT_PATH/config.json','utf8')); } catch { return null; }
+                })(),
+                readme: (() => {
+                  try { return fs.readFileSync('$KIT_PATH/README.md','utf8'); } catch { return null; }
+                })(),
+                flows,
+                meta: {
+                  repository: '${{ github.repository }}',
+                  pr_number: ${{ github.event.workflow_run.pull_requests[0].number || 0 }},
+                  sha: '${{ github.event.workflow_run.head_sha }}',
+                  submitted_at: new Date().toISOString()
+                }
+              };
+
+              fs.writeFileSync('/tmp/payload_$SLUG.json', JSON.stringify(payload, null, 2));
+              console.log('Payload written to /tmp/payload_$SLUG.json');
+            "
+
+            echo "Payload preview:"
+            cat /tmp/payload_$SLUG.json
+
+            # POST to webhook.site
+            RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -X POST "$LAMATIC_VALIDATION_ENDPOINT" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $LAMATIC_VALIDATION_API_KEY" \
+              -H "X-AgentKit-Kit: $SLUG" \
+              -H "X-AgentKit-Type: $TYPE" \
+              --data @/tmp/payload_$SLUG.json \
+              --max-time 30)
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+
+            echo "Response HTTP $HTTP_CODE"
+            echo "Response body: $BODY"
+          done
+
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Post Studio verdict as PR comment
+        if: ${{ steps.studio.outputs.skipped != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number }}"
+          REPO="${{ github.repository }}"
+
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "0" ]; then
+            echo "No PR number found — skipping comment."
+            exit 0
+          fi
+
+          COMMENT=$(cat <<'EOF'
+## :satellite: Studio Runtime Validation (Phase 2 — Testing)
+
+Payload successfully sent to the test endpoint.
+
+> :mag: Check [webhook.site](https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb) to inspect the exact payload that will be sent to the real Lamatic Studio endpoint once engineering builds it.
+
+Once the real endpoint is live, this comment will show actual validation results from Lamatic Studio.
+EOF
+          )
+
+          # Find existing bot comment with this header and update it, or post new
+          COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.type == "Bot" and (.body | contains("Studio Runtime Validation"))) | .id' \
+            | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api "repos/$REPO/issues/comments/$COMMENT_ID" \
+              --method PATCH \
+              -f body="$COMMENT" || true
+          else
+            gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+              --method POST \
+              -f body="$COMMENT" || true
+          fi
