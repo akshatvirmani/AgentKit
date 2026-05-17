@@ -226,13 +226,16 @@ jobs:
             exit 0
           fi
 
-          COMMENT="## :satellite: Studio Runtime Validation (Phase 2 — Testing)
+          # Write comment to file to avoid YAML special character issues
+          cat > /tmp/studio_comment.md << 'COMMENT_EOF'
+## :satellite: Studio Runtime Validation (Phase 2 — Testing)
 
 Payload successfully sent to the test endpoint.
 
-> :mag: Check [webhook.site](https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb) to inspect the exact payload that will be sent to the real Lamatic Studio endpoint once engineering builds it.
+Check [webhook.site](https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb) to inspect the exact payload that will be sent to the real Lamatic Studio endpoint once engineering builds it.
 
-Once the real endpoint is live, this comment will show actual validation results from Lamatic Studio."
+Once the real endpoint is live, this comment will show actual validation results from Lamatic Studio.
+COMMENT_EOF
 
           # Find existing bot comment with this header and update it, or post new
           COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
@@ -242,9 +245,9 @@ Once the real endpoint is live, this comment will show actual validation results
           if [ -n "$COMMENT_ID" ]; then
             gh api "repos/$REPO/issues/comments/$COMMENT_ID" \
               --method PATCH \
-              -f body="$COMMENT" || true
+              -f body="$(cat /tmp/studio_comment.md)" || true
           else
             gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
               --method POST \
-              -f body="$COMMENT" || true
+              -f body="$(cat /tmp/studio_comment.md)" || true
           fi
