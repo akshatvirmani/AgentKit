@@ -65,6 +65,7 @@ jobs:
         env:
           LAMATIC_VALIDATION_API_KEY: ${{ secrets.LAMATIC_VALIDATION_API_KEY }}
           LAMATIC_VALIDATION_ENDPOINT: 'https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb'
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           if [ -z "$LAMATIC_VALIDATION_API_KEY" ]; then
             echo "::warning::LAMATIC_VALIDATION_API_KEY not set — skipping Studio check."
@@ -147,8 +148,6 @@ jobs:
             echo "Response body: $BODY"
           done
           echo "skipped=false" >> "$GITHUB_OUTPUT"
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
 
       - name: Post Studio verdict as PR comment
         if: ${{ steps.studio.outputs.skipped != 'true' }}
