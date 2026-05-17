@@ -90,6 +90,7 @@ jobs:
               TYPE="unknown"
             fi
             SLUG=$(basename "$KIT_PATH")
+            export KIT_PATH SLUG TYPE
             node -e "
               const fs = require('fs');
               const path = require('path');
