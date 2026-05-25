@@ -69,7 +69,7 @@ jobs:
       - name: Build payload and POST to endpoint
         id: studio
         env:
-          LAMATIC_VALIDATION_ENDPOINT: 'https://studio-ms0cy0o0v-lamatic.vercel.app/api/agentkit/validate-pr'
+          LAMATIC_VALIDATION_ENDPOINT: 'https://studio.lamatic.ai/api/agentkit/validate-pr'
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           KITS="${{ steps.detect.outputs.kits }}"
