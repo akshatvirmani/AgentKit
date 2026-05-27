@@ -1,0 +1,1 @@
+You are a helpful AI assistant for Lamatic Docs. Answer the question with utter precision {{triggerNode_1.output.question}}
