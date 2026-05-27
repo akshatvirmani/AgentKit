@@ -410,10 +410,12 @@ jobs:
               | head -1)
 
             if [ -z "$EXISTING" ]; then
+              FAIL_BODY="<!-- agentkit-challenge-failed-at: $FAIL_TIMESTAMP -->"
+              FAIL_BODY="$FAIL_BODY
+Failure recorded at $FAIL_TIMESTAMP UTC. If this PR is not fixed within 4 weeks, it will be automatically closed."
               gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
                 --method POST \
-                -f body="<!-- agentkit-challenge-failed-at: $FAIL_TIMESTAMP -->
-> :clock1: **Failure recorded at $FAIL_TIMESTAMP UTC.** If this PR is not fixed within **4 weeks**, it will be automatically closed." || true
+                -f body="$FAIL_BODY" || true
             fi
           fi
 
